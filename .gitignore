@@ -1,0 +1,13 @@
+DerivedData/
+artifacts/
+*.xcuserstate
+xcuserdata/
+.DS_Store
+*.p12
+*.mobileprovision
+*.apk
+*.dex
+*.so
+Evidence/
+__pycache__/
+DerivedData-device/

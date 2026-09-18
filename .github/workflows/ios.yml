@@ -1,0 +1,73 @@
+name: iOS build and simulator tests
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['Reader/**', 'ReaderTests/**', 'Scripts/**', '.github/workflows/ios.yml']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  simulator:
+    runs-on: macos-15
+    timeout-minutes: 35
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Inspect toolchain and generate project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          test -d "$DEVELOPER_DIR"
+          { sw_vers; uname -m; xcodebuild -version; } | tee artifacts/environment.txt
+          python3 Scripts/generate_project.py
+          plutil -lint LocalReader.xcodeproj/project.pbxproj
+          xcrun simctl list devices available -j > artifacts/simulators.json
+          python3 Scripts/select_simulator.py artifacts/simulators.json >> "$GITHUB_ENV"
+      - name: Run XCTest on an iPhone simulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild test -project LocalReader.xcodeproj -scheme LocalReader \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+            -parallel-testing-enabled NO -maximum-concurrent-test-simulator-destinations 1 \
+            -derivedDataPath DerivedData -resultBundlePath artifacts/Tests.xcresult \
+            CODE_SIGNING_ALLOWED=NO 2>&1 | tee artifacts/test.log
+      - name: Launch development app and capture screenshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun simctl bootstatus "$SIMULATOR_ID" -b
+          APP=DerivedData/Build/Products/Debug-iphonesimulator/LocalReader.app
+          xcrun simctl install "$SIMULATOR_ID" "$APP"
+          xcrun simctl launch "$SIMULATOR_ID" com.kupetis.localreader | tee artifacts/launch.txt
+          sleep 3
+          xcrun simctl io "$SIMULATOR_ID" screenshot artifacts/simulator.png
+          ditto -c -k --sequesterRsrc --keepParent "$APP" artifacts/LocalReader-simulator.app.zip
+      - name: Compile unsigned iPhone device build
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild build -project LocalReader.xcodeproj -scheme LocalReader \
+            -configuration Release -destination 'generic/platform=iOS' \
+            -derivedDataPath DerivedData-device CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee artifacts/device-build.log
+          ditto -c -k --sequesterRsrc --keepParent \
+            DerivedData-device/Build/Products/Release-iphoneos/LocalReader.app \
+            artifacts/LocalReader-UNSIGNED-device.app.zip
+      - name: Upload logs, test results and available build products
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ios-build-${{ github.run_number }}
+          path: artifacts/
+          retention-days: 7
+          if-no-files-found: warn
