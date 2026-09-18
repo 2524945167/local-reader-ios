@@ -33,6 +33,7 @@ jobs:
           xcrun simctl list devices available -j > artifacts/simulators.json
           python3 Scripts/select_simulator.py artifacts/simulators.json >> "$GITHUB_ENV"
       - name: Run XCTest on an iPhone simulator
+        timeout-minutes: 10
         shell: bash
         run: |
           set -euo pipefail
